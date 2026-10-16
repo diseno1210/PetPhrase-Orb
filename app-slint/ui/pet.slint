@@ -1,25 +1,44 @@
-import { Theme } from "common.slint";
-
 export component PetWindow inherits Window {
     in property <image> sheet;
     in property <int> frame-col;
     in property <int> frame-row;
     in property <float> pet-scale: 1.0;
-    // 无可用宠物素材:显示占位提示,点击改为打开设置(Rust 侧判断)
+    // Kept for compatibility with the native click callback.
     in property <bool> missing: false;
+    in property <bool> liquid-orb: true;
+    in property <image> orb-image;
     callback pet-clicked;
     callback drag-start;
 
     no-frame: true;
     always-on-top: true;
     background: transparent;
-    width: 192px * pet-scale;
-    height: 208px * pet-scale;
+    width: (liquid-orb ? 96px : 192px) * pet-scale;
+    height: (liquid-orb ? 104px : 208px) * pet-scale;
     title: "PetPhrase";
-    default-font-family: "Microsoft YaHei UI";
+    default-font-family: "Segoe UI";
+
+    // Liquid glass orb; Rust resamples to this window's physical pixel size.
+    orb := Rectangle {
+        visible: root.liquid-orb;
+        width: parent.width;
+        height: parent.height;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        background: transparent;
+        opacity: ta.pressed ? 0.82 : ta.has-hover ? 0.94 : 1.0;
+        animate opacity { duration: 160ms; easing: ease-out; }
+        Image {
+            width: parent.width;
+            height: parent.height;
+            source: root.orb-image;
+            image-fit: fill;
+            image-rendering: smooth;
+        }
+    }
 
     img := Image {
-        visible: !root.missing;
+        visible: !root.liquid-orb;
         width: parent.width;
         height: parent.height;
         source: root.sheet;
@@ -30,31 +49,14 @@ export component PetWindow inherits Window {
         source-clip-height: 208;
     }
 
-    // 素材缺失占位:否则窗口全透明,用户以为程序没启动
-    if root.missing: Rectangle {
-        width: Math.min(parent.width - 8px, 176px);
-        height: 64px;
-        x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 2;
-        background: #ffffffe6;
-        border-width: 1px;
-        border-color: Theme.danger;
-        border-radius: 10px;
-        Text {
-            width: parent.width - 12px;
-            text: "宠物素材缺失\n点击打开设置选择宠物";
-            color: Theme.danger;
-            font-size: 11px;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-            wrap: word-wrap;
-        }
-    }
-
     // 拖拽后吞掉本次 click:系统拖窗接管后松手仍会触发 clicked
     property <bool> dragged: false;
 
     ta := TouchArea {
+        width: root.liquid-orb ? 71px * root.pet-scale : parent.width;
+        height: root.liquid-orb ? self.width : parent.height;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
         mouse-cursor: pointer;
         moved => {
             if (self.pressed && (Math.abs(self.mouse-x / 1px - self.pressed-x / 1px) > 4 || Math.abs(self.mouse-y / 1px - self.pressed-y / 1px) > 4)) {

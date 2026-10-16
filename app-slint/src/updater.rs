@@ -7,8 +7,8 @@
 use std::path::Path;
 use std::process::Command;
 
-const RELEASES_LATEST_URL: &str = "https://github.com/chengbuilds/PetPhrase/releases/latest";
-const DOWNLOAD_BASE: &str = "https://github.com/chengbuilds/PetPhrase/releases/download";
+const RELEASES_LATEST_URL: &str = "https://github.com/diseno1210/PetPhrase-Orb/releases/latest";
+const DOWNLOAD_BASE: &str = "https://github.com/diseno1210/PetPhrase-Orb/releases/download";
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const CHECK_TIMEOUT_SECS: &str = "10";
 const DOWNLOAD_TIMEOUT_SECS: &str = "300";
@@ -214,7 +214,7 @@ mod tests {
         assert_eq!(u.version, "0.6.0");
         assert_eq!(
             u.setup_url,
-            "https://github.com/chengbuilds/PetPhrase/releases/download/v0.6.0/PetPhrase_0.6.0_x64-setup.exe"
+            "https://github.com/diseno1210/PetPhrase-Orb/releases/download/v0.6.0/PetPhrase_0.6.0_x64-setup.exe"
         );
         assert_eq!(u.sha256_url, format!("{}.sha256", u.setup_url));
     }

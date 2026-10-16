@@ -1,6 +1,6 @@
 {
-  "name": "Mochi",
+  "name": "幻彩圆形按钮",
   "slug": "default",
-  "kind": "slime",
+  "kind": "liquid-glass",
   "frame": { "width": 192, "height": 208 }
 }

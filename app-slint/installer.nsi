@@ -4,7 +4,7 @@ Unicode true
 !include "FileFunc.nsh"
 
 !define APP_NAME "PetPhrase"
-!define APP_VERSION "0.7.0"
+!define APP_VERSION "0.7.1"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
 
 Name "${APP_NAME}"
@@ -33,9 +33,12 @@ Section "Install"
 
   SetOutPath "$INSTDIR"
   File "target\release\PetPhrase.exe"
+  File /oname=LICENSE.txt "..\LICENSE"
+  File /oname=THIRD_PARTY_NOTICES.txt "..\THIRD_PARTY_NOTICES.md"
   SetOutPath "$INSTDIR\pets\default"
   File "pets\default\pet.json"
   File "pets\default\spritesheet.png"
+  File "pets\default\orb.png"
 
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
@@ -68,6 +71,8 @@ Section "Uninstall"
   nsExec::Exec 'taskkill /F /IM PetPhrase.exe'
 
   Delete "$INSTDIR\PetPhrase.exe"
+  Delete "$INSTDIR\LICENSE.txt"
+  Delete "$INSTDIR\THIRD_PARTY_NOTICES.txt"
   RMDir /r "$INSTDIR\pets"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"

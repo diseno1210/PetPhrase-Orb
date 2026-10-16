@@ -5,8 +5,10 @@
 
 mod anim;
 mod logic;
+mod liquid_orb;
 mod pet_loader;
 mod storage;
+mod tray_window;
 mod updater;
 
 use anim::{Animator, PetState};
@@ -234,7 +236,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     slint::BackendSelector::new()
         .backend_name("winit".into())
         .renderer_name("software".into())
-        .with_winit_window_attributes_hook(|attrs| attrs.with_transparent(true))
+        .with_winit_window_attributes_hook(|attrs| {
+            use winit::platform::windows::WindowAttributesExtWindows;
+            // Set before creation for every window, including settings and popups.
+            attrs.with_transparent(true).with_skip_taskbar(true)
+        })
         .select()?;
 
     let dir = data_dir();
@@ -291,7 +297,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     wire_pet(&app);
     wire_panel(&app);
     wire_settings(&app);
-    setup_frame_timer(&app);
     let _tray = setup_tray(&app)?;
 
     // 启动 10s 后静默检查一次更新;此后每 24h 重查一次
@@ -350,12 +355,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     clamp_pet_to_screen(&app);
-    app.pet
-        .window()
-        .with_winit_window(|w: &winit::window::Window| {
-            use winit::platform::windows::WindowExtWindows;
-            w.set_skip_taskbar(true);
-        });
+    tray_window::configure(app.pet.window());
+    setup_frame_timer(&app)?;
 
     slint::run_event_loop_until_quit()?;
     Ok(())
@@ -398,7 +399,10 @@ fn clamp_pet_to_screen(app: &Rc<App>) {
             if visible {
                 return;
             }
-            if let Some(m) = w.primary_monitor().or_else(|| w.available_monitors().next()) {
+            if let Some(m) = w
+                .primary_monitor()
+                .or_else(|| w.available_monitors().next())
+            {
                 let mp = m.position();
                 let ms = m.size();
                 let nx = (mp.x + ms.width as i32 - size.width as i32 - 80).max(mp.x);
@@ -422,6 +426,7 @@ fn recover_pet(app: &Rc<App>) {
     let _ = app.pet.show();
     clamp_pet_to_screen(app);
     assert_topmost(app.pet.window());
+    tray_window::configure(app.pet.window());
     app.state.borrow_mut().animator.play(PetState::Wave, true);
 }
 
@@ -480,9 +485,14 @@ fn try_load_sheet(path: &str) -> Option<(slint::Image, i32, i32)> {
     Some((img, rows, cols))
 }
 
-/// 选中宠优先,解码失败依次回退其它可用宠;全部失败显示缺失占位
-/// (不显示占位的话窗口全透明还挡点击,用户以为程序没启动)
+/// 默认内嵌幻彩按钮；自定义素材解码失败时回退至内置按钮。
 fn refresh_pet_sprite(app: &Rc<App>) {
+    // The default launcher is embedded, independent of external pet files.
+    if app.state.borrow().settings.pet_id == "default" {
+        app.pet.set_liquid_orb(true);
+        app.pet.set_missing(false);
+        return;
+    }
     let candidates: Vec<String> = {
         let st = app.state.borrow();
         let selected = st
@@ -492,18 +502,22 @@ fn refresh_pet_sprite(app: &Rc<App>) {
         selected
             .into_iter()
             .chain(st.pets.iter().filter(|p| p.error.is_none()))
+            .filter(|p| p.id != "default")
             .map(|p| p.spritesheet.clone())
             .collect() // 选中宠在首位,可能重复一次,解码成功即返回无所谓
     };
     for path in &candidates {
         if let Some((img, rows, cols)) = try_load_sheet(path) {
+            app.pet.set_liquid_orb(false);
             app.state.borrow_mut().animator = Animator::new(rows, cols);
             app.pet.set_sheet(img);
             app.pet.set_missing(false);
             return;
         }
     }
-    app.pet.set_missing(true);
+    // An unavailable custom pet must still leave a usable launcher.
+    app.pet.set_liquid_orb(true);
+    app.pet.set_missing(false);
     app.pet.set_sheet(slint::Image::default());
 }
 
@@ -514,24 +528,61 @@ fn apply_pet_scale(app: &Rc<App>, old_scale: f32, new_scale: f32) {
     let win = app.pet.window();
     let sf = win.scale_factor();
     let pos = win.position();
-    let dw = anim::FRAME_W as f32 * (old_scale - new_scale) * sf;
-    let dh = anim::FRAME_H as f32 * (old_scale - new_scale) * sf;
+    let appearance_scale = if app.pet.get_liquid_orb() { 0.5 } else { 1.0 };
+    let dw = anim::FRAME_W as f32 * appearance_scale * (old_scale - new_scale) * sf;
+    let dh = anim::FRAME_H as f32 * appearance_scale * (old_scale - new_scale) * sf;
     let nx = pos.x + (dw / 2.0).round() as i32;
     let ny = pos.y + dh.round() as i32;
     win.set_position(slint::PhysicalPosition::new(nx, ny));
 }
 
-fn setup_frame_timer(app: &Rc<App>) {
+fn setup_frame_timer(app: &Rc<App>) -> Result<(), image::ImageError> {
     let a = app.clone();
+    let mut orb = liquid_orb::LiquidOrb::new()?;
+    let mut orb_frame = 0;
+    let mut native_ready = false;
+    let size = app.pet.window().size();
+    app.pet.set_orb_image(orb.frame(orb_frame, size.width, size.height));
+    let last_sprite_tick = std::cell::Cell::new(std::time::Instant::now());
     let timer = Box::leak(Box::new(slint::Timer::default()));
     timer.start(
         slint::TimerMode::Repeated,
-        Duration::from_millis(anim::FRAME_MS),
+        Duration::from_millis(80),
         move || {
+            // Native windows are created only after the event loop starts.
+            // Winit can also restore its styles while processing layout changes.
+            tray_window::configure(a.pet.window());
+            if a.panel.window().is_visible() {
+                tray_window::configure(a.panel.window());
+            }
+            if a.settings_win.window().is_visible() {
+                tray_window::configure(a.settings_win.window());
+            }
+            if !native_ready && a.pet.window().has_winit_window() {
+                native_ready = true;
+                let scale = a.pet.get_pet_scale();
+                let factor = if a.pet.get_liquid_orb() { 0.5 } else { 1.0 };
+                a.pet.window().set_size(slint::LogicalSize::new(
+                    192.0 * factor * scale, 208.0 * factor * scale,
+                ));
+                clamp_pet_to_screen(&a);
+            }
             // 宠隐藏时不空转(托盘隐藏后帧步进/属性刷新纯浪费)
             if !a.pet.window().is_visible() {
+                last_sprite_tick.set(std::time::Instant::now());
                 return;
             }
+            if a.pet.get_liquid_orb() {
+                orb_frame = (orb_frame + 1) % liquid_orb::FRAME_COUNT;
+                let size = a.pet.window().size();
+                a.pet.set_orb_image(orb.frame(orb_frame, size.width, size.height));
+                last_sprite_tick.set(std::time::Instant::now());
+                return;
+            }
+            if last_sprite_tick.get().elapsed() < Duration::from_millis(anim::FRAME_MS) {
+                return;
+            }
+            last_sprite_tick.set(last_sprite_tick.get() + Duration::from_millis(anim::FRAME_MS));
             let (row, col) = {
                 let mut st = a.state.borrow_mut();
                 // 闲够一段随机时长播一个彩蛋动画(jump/run/review/failed),
@@ -556,6 +607,7 @@ fn setup_frame_timer(app: &Rc<App>) {
             a.pet.set_frame_col(col);
         },
     );
+    Ok(())
 }
 
 /* ================= 面板窗 ================= */
@@ -1023,6 +1075,7 @@ fn show_panel(app: &Rc<App>) {
             placement.y as i32,
         ));
     ensure_panel_native(app);
+    tray_window::configure(app.panel.window());
 
     app.panel
         .window()
@@ -1061,6 +1114,7 @@ fn open_settings(app: &Rc<App>) {
     refresh_pets(app);
     refresh_settings(app);
     let _ = app.settings_win.show();
+    tray_window::configure(app.settings_win.window());
     app.settings_win
         .window()
         .with_winit_window(|w: &winit::window::Window| {
@@ -1429,7 +1483,7 @@ fn wire_settings(app: &Rc<App>) {
             }
             (p.id.clone(), p.spritesheet.clone())
         };
-        if try_load_sheet(&sheet).is_none() {
+        if id != "default" && try_load_sheet(&sheet).is_none() {
             set_data_msg(&a, "⚠ 该宠物雪碧图无法解码(文件损坏?),已保留当前选择", true);
             return;
         }

@@ -35,3 +35,7 @@ src-tauri/
 node_modules/
 .vite/
 video/
+
+# Python-generated cache
+__pycache__/
+*.py[cod]

@@ -1,7 +1,7 @@
 [package]
 name = "petphrase-slint"
-version = "0.7.0"
-description = "PetPhrase 桌宠常用语工具(Slint 原生版)"
+version = "0.7.1"
+description = "PetPhrase Orb 幻彩圆球常用语工具（基于 chengbuilds/PetPhrase）"
 edition = "2021"
 
 [dependencies]
